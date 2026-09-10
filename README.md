@@ -1,3 +1,4 @@
+# Note: Savanna's local copy for BE104 practice.
 # Recipe Box API
 
 A small, working Flask + SQLite API for keeping recipes. Full CRUD, clean
