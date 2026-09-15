@@ -85,6 +85,31 @@ def register():
 
     return jsonify({"id": cur.lastrowid, "username": username, "email": email}), 201
 
+@app.post("/login")
+def login():
+    data = request.get_json() or {}
+
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+
+    db = get_db()
+
+    cur = db.execute(
+        "SELECT id, username, email, password_hash FROM users WHERE username = ?",
+        (username,),
+    )
+    user = cur.fetchone()
+
+    if user is None or not verify_password(user["password_hash"], password):
+        return jsonify({"error": "invalid credentials"}), 401
+
+    return jsonify(
+        {
+            "id": user["id"],
+            "username": user["username"],
+            "email": user["email"],
+        }
+    ), 200
 
 @app.get("/recipes/<int:recipe_id>")
 def get_recipe(recipe_id):
@@ -165,4 +190,4 @@ def delete_recipe(recipe_id):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5001)
