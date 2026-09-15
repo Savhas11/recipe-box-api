@@ -92,6 +92,10 @@ def login():
     username = data.get("username", "").strip()
     password = data.get("password", "")
 
+    # 👇 NEW: check for missing fields = 400 Bad Request
+    if not username or not password:
+        return jsonify({"error": "username and password are required"}), 400
+
     db = get_db()
 
     cur = db.execute(
@@ -100,6 +104,7 @@ def login():
     )
     user = cur.fetchone()
 
+    # 👇 Only here do we treat it as invalid credentials = 401
     if user is None or not verify_password(user["password_hash"], password):
         return jsonify({"error": "invalid credentials"}), 401
 
