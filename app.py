@@ -6,6 +6,14 @@ That is the point: you will add both, lesson by lesson, in Units 2 and 3.
 """
 
 import sqlite3
+import os
+
+from dotenv import load_dotenv
+import jwt
+from datetime import datetime, timedelta
+
+load_dotenv()
+JWT_SECRET = os.getenv("JWT_SECRET")
 
 from flask import Flask, g, jsonify, request
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -92,7 +100,7 @@ def login():
     username = data.get("username", "").strip()
     password = data.get("password", "")
 
-    # 👇 NEW: check for missing fields = 400 Bad Request
+    # Missing fields → 400
     if not username or not password:
         return jsonify({"error": "username and password are required"}), 400
 
@@ -102,6 +110,31 @@ def login():
         "SELECT id, username, email, password_hash FROM users WHERE username = ?",
         (username,),
     )
+    row = cur.fetchone()
+
+    # Username not found or password wrong → 401
+    if row is None or not check_password_hash(row["password_hash"], password):
+        return jsonify({"error": "invalid credentials"}), 401
+
+    # ✅ At this point, the user is AUTHENTICATED.
+    user_id = row["id"]
+    username = row["username"]
+
+    # Build the JWT payload (what goes inside the wristband)
+    payload = {
+        "user_id": user_id,
+        "username": username,
+        "exp": datetime.utcnow() + timedelta(hours=2),  # token expires in 2 hours
+    }
+
+    # Sign the token with our secret
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    # Send back token on success (keep 200 status)
+    return jsonify({
+        "message": "login successful",
+        "token": token,
+    }), 200
     user = cur.fetchone()
 
     # 👇 Only here do we treat it as invalid credentials = 401
