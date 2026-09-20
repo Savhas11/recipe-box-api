@@ -19,6 +19,40 @@ JWT_SECRET = os.getenv("JWT_SECRET")
 from flask import Flask, g, jsonify, request
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from functools import wraps
+import os
+import jwt
+from jwt import ExpiredSignatureError, InvalidTokenError
+
+def token_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        auth_header = request.headers.get("Authorization")
+
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return jsonify({"error": "missing or invalid authorization header"}), 401
+
+        token = auth_header.split(" ", 1)[1]
+        secret = os.getenv("JWT_SECRET")
+
+        try:
+            payload = jwt.decode(token, secret, algorithms=["HS256"])
+        except ExpiredSignatureError:
+            return jsonify({"error": "token expired – please log in again"}), 401
+        except InvalidTokenError:
+            return jsonify({"error": "invalid token"}), 401
+
+        # ✅ Save the user info for the route to use
+        g.current_user = {
+            "user_id": payload["user_id"],
+            "role": payload.get("role", "user")
+        }
+
+        # 👉 now call the original route
+        return f(*args, **kwargs)
+
+    return wrapper
+
 DATABASE = "recipes.db"
 
 app = Flask(__name__)
@@ -107,8 +141,9 @@ def login():
 
     db = get_db()
 
+    # ⬇️ Now also select role
     cur = db.execute(
-        "SELECT id, username, email, password_hash FROM users WHERE username = ?",
+        "SELECT id, username, email, password_hash, role FROM users WHERE username = ?",
         (username,),
     )
     row = cur.fetchone()
@@ -120,35 +155,24 @@ def login():
     # ✅ At this point, the user is AUTHENTICATED.
     user_id = row["id"]
     username = row["username"]
+    role = row["role"]  # ⬅️ read role from DB
 
-    # Build the JWT payload (what goes inside the wristband)
+    # Build the JWT payload (the "badge" they carry)
     payload = {
         "user_id": user_id,
         "username": username,
-        "exp": datetime.utcnow() + timedelta(seconds=30),  # token expires in 2 hours
+        "role": role,  # ⬅️ include role in the token
+        "exp": datetime.utcnow() + timedelta(hours=2),
     }
 
     # Sign the token with our secret
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-    # Send back token on success (keep 200 status)
+    # Send back token on success
     return jsonify({
         "message": "login successful",
         "token": token,
     }), 200
-    user = cur.fetchone()
-
-    # 👇 Only here do we treat it as invalid credentials = 401
-    if user is None or not verify_password(user["password_hash"], password):
-        return jsonify({"error": "invalid credentials"}), 401
-
-    return jsonify(
-        {
-            "id": user["id"],
-            "username": user["username"],
-            "email": user["email"],
-        }
-    ), 200
 
 @app.get("/recipes/<int:recipe_id>")
 def get_recipe(recipe_id):
@@ -159,30 +183,37 @@ def get_recipe(recipe_id):
         return jsonify({"error": "recipe not found"}), 404
     return jsonify(recipe_to_dict(row))
 
-
 @app.patch("/recipes/<int:recipe_id>")
+@token_required
 def update_recipe(recipe_id):
-    # 🔐 Require a valid Bearer token
-    auth_header = request.headers.get("Authorization")
+    # 🧍 get current user info from the decorator (stored on g)
+    current_user_id = g.current_user["user_id"]
+    current_role = g.current_user["role"]
 
-    if not auth_header or not auth_header.startswith("Bearer "):
-        return jsonify({"error": "missing or invalid authorization header"}), 401
-
-    token = auth_header.split(" ", 1)[1]
-    secret = os.getenv("JWT_SECRET")
-
-    try:
-        payload = jwt.decode(token, secret, algorithms=["HS256"])
-    except ExpiredSignatureError:
-        return jsonify({"error": "token expired – please log in again"}), 401
-    except InvalidTokenError:
-        return jsonify({"error": "invalid token"}), 401
-
-    # ✅ If we get here, token is valid — continue with update logic
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "a JSON body is required"}), 400
 
+    db = get_db()
+
+    # Load the recipe from the DB
+    row = db.execute(
+        "SELECT * FROM recipes WHERE id = ?", (recipe_id,)
+    ).fetchone()
+
+    if row is None:
+        return jsonify({"error": "recipe not found"}), 404
+
+    # 🔒 Ownership OR admin check
+    is_owner = (row["user_id"] is not None and row["user_id"] == current_user_id)
+    is_admin = (current_role == "admin")
+
+    if not (is_owner or is_admin):
+        return jsonify(
+            {"error": "you do not have permission to modify this recipe"}
+        ), 403
+
+    # 👉 If we get here, user IS owner or admin – safe to update
     fields, values = [], []
     for column in ("title", "ingredients", "instructions"):
         if column in data:
@@ -195,7 +226,7 @@ def update_recipe(recipe_id):
         return jsonify({"error": "nothing to update"}), 400
 
     values.append(recipe_id)
-    db = get_db()
+
     try:
         cur = db.execute(
             f"UPDATE recipes SET {', '.join(fields)} WHERE id = ?", values
@@ -213,15 +244,40 @@ def update_recipe(recipe_id):
     return jsonify(recipe_to_dict(row)), 200
 
 
-
 @app.delete("/recipes/<int:recipe_id>")
+@token_required
 def delete_recipe(recipe_id):
+    # 🧍 get current user info from decorator
+    current_user_id = g.current_user["user_id"]
+    current_role = g.current_user["role"]
+
     db = get_db()
+
+    # 🔒 Load the recipe to check ownership
+    row = db.execute(
+        "SELECT * FROM recipes WHERE id = ?", (recipe_id,)
+    ).fetchone()
+
+    if row is None:
+        return jsonify({"error": "recipe not found"}), 404
+
+    # 🔒 Ownership OR admin check
+    is_owner = (row["user_id"] is not None and row["user_id"] == current_user_id)
+    is_admin = (current_role == "admin")
+
+    if not (is_owner or is_admin):
+        return jsonify(
+            {"error": "you do not have permission to delete this recipe"}
+        ), 403
+
+    # ✅ User is owner or admin – safe to delete
     cur = db.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
     db.commit()
+
     if cur.rowcount == 0:
         return jsonify({"error": "recipe not found"}), 404
-    return "", 204
+
+    return jsonify({"message": "recipe deleted"}), 200
 
 
 if __name__ == "__main__":
