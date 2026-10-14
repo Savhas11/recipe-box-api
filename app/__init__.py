@@ -5,24 +5,23 @@ and it trusts everyone. There is no authentication and no authorization yet.
 That is the point: you will add both, lesson by lesson, in Units 2 and 3.
 """
 
-import sqlite3
 import os
+import sqlite3
+from datetime import datetime, timedelta
+from functools import wraps
 
 from dotenv import load_dotenv
-import jwt
-from jwt import InvalidTokenError, ExpiredSignatureError
-from datetime import datetime, timedelta
-
 load_dotenv()
-JWT_SECRET = os.getenv("JWT_SECRET")
 
-from flask import Flask, g, jsonify, request
+from flask import Flask, g, jsonify, request, current_app
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from functools import wraps
-import os
 import jwt
 from jwt import ExpiredSignatureError, InvalidTokenError
+
+from app.config import DevelopmentConfig, TestingConfig, ProductionConfig
+
+
 
 def token_required(f):
     @wraps(f)
@@ -33,7 +32,7 @@ def token_required(f):
             return jsonify({"error": "missing or invalid authorization header"}), 401
 
         token = auth_header.split(" ", 1)[1]
-        secret = os.getenv("JWT_SECRET")
+        secret = current_app.config["JWT_SECRET"]
 
         try:
             payload = jwt.decode(token, secret, algorithms=["HS256"])
@@ -53,12 +52,27 @@ def token_required(f):
 
     return wrapper
 
-DATABASE = "recipes.db"
+def get_db():
+    if "db" not in g:
+        db_path = current_app.config["DATABASE"]
+        g.db = sqlite3.connect(db_path)
+        g.db.row_factory = sqlite3.Row
+    return g.db
+
 
 # app = Flask(__name__)
 
 def create_app(config_name):
     app = Flask(__name__)
+
+    config_map = {
+        "development": DevelopmentConfig,
+        "testing": TestingConfig,
+        "production": ProductionConfig,
+    }
+
+    config_class = config_map.get(config_name, DevelopmentConfig)
+    app.config.from_object(config_class)
     
     @app.teardown_appcontext
     def close_db(exception):
@@ -138,8 +152,12 @@ def create_app(config_name):
             "exp": datetime.utcnow() + timedelta(hours=2),
         }
 
-        # Sign the token with our secret
-        token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+        # 🔑 Get settings from config (NOT globals)
+        secret = current_app.config["JWT_SECRET"]
+        algorithm = current_app.config["JWT_ALGORITHM"]
+
+        # Sign the token with our secret + algorithm from config
+        token = jwt.encode(payload, secret, algorithm=algorithm)
 
         # Send back token on success
         return jsonify({
@@ -263,12 +281,6 @@ def verify_password(stored_hash: str, candidate_password: str) -> bool:
     return check_password_hash(stored_hash, candidate_password)
 
 
-def get_db():
-    if "db" not in g:
-        g.db = sqlite3.connect(DATABASE)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
-    return g.db
 
 
 
