@@ -6,7 +6,6 @@ That is the point: you will add both, lesson by lesson, in Units 2 and 3.
 """
 
 import os
-import sqlite3
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -21,6 +20,7 @@ from jwt import ExpiredSignatureError, InvalidTokenError
 
 from app.config import DevelopmentConfig, TestingConfig, ProductionConfig
 
+from app.extensions import db
 
 
 def token_required(f):
@@ -52,17 +52,16 @@ def token_required(f):
 
     return wrapper
 
-def get_db():
-    if "db" not in g:
-        db_path = current_app.config["DATABASE"]
-        g.db = sqlite3.connect(db_path)
-        g.db.row_factory = sqlite3.Row
-    return g.db
+##def get_db():
+    #if "db" not in g:
+       # db_path = current_app.config["DATABASE"]
+       # g.db = sqlite3.connect(db_path)
+       # g.db.row_factory = sqlite3.Row
+   # return g.db
 
 
 # app = Flask(__name__)
-
-def create_app(config_name):
+def create_app(config_name="development"):
     app = Flask(__name__)
 
     from app.routes.auth import auth_bp
@@ -79,42 +78,15 @@ def create_app(config_name):
 
     config_class = config_map.get(config_name, DevelopmentConfig)
     app.config.from_object(config_class)
-    
-    @app.teardown_appcontext
-    def close_db(exception):
-        db = g.pop("db", None)
-        if db is not None:
-            db.close()
 
-    @app.get("/")
-    def hello():
-        return jsonify({"message": "Recipe Box API", "recipes": "/recipes"})
+    print("DATABASE URI:", app.config["SQLALCHEMY_DATABASE_URI"])
+
+    db.init_app(app)
 
     return app
-
-def hash_password(plain_password: str) -> str:
-    """Turn a plain password into a one-way hash for storing in the database."""
-    return generate_password_hash(plain_password)
-
-
-def verify_password(stored_hash: str, candidate_password: str) -> bool:
-    """Check if a candidate password matches the stored hash."""
-    return check_password_hash(stored_hash, candidate_password)
-
-
-
-
-
-
-
-def recipe_to_dict(row):
-    return {
-        "id": row["id"],
-        "title": row["title"],
-        "ingredients": row["ingredients"],
-        "instructions": row["instructions"],
-        "is_public": bool(row["is_public"]),
-    }
+    
+  
+    
 
 
 
