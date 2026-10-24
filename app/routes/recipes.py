@@ -5,46 +5,51 @@ from app.models import Recipe, get_recipe_by_id, update_recipe_row
 from app.services.recipe_service import get_public_recipes
 from app.extensions import db
 from app.services.recipe_service import get_recipe_by_id_orm
+from app.extensions import cache
+
 
 
 recipes_bp = Blueprint("recipes", __name__, url_prefix="")
 
 @recipes_bp.get("/recipes")
+@cache.cached(timeout=10)
 def list_recipes():
-        print("DEBUG: inside list_recipes ORM version")
+    print("DEBUG: inside list_recipes ORM version")
 
-        recipes = Recipe.query.order_by(Recipe.id).all()
+    recipes = Recipe.query.order_by(Recipe.id).all()
 
-        return jsonify([
-        {
-            "id": recipe.id,
-            "title": recipe.title,
-            "ingredients": recipe.ingredients,
-            "instructions": recipe.instructions,
-            "user_id": recipe.user_id,
-            "is_public": bool(recipe.is_public)
-        }
-        for recipe in recipes
-    ])
-       
+    return jsonify([
+    {
+        "id": recipe.id,
+        "title": recipe.title,
+        "ingredients": recipe.ingredients,
+        "instructions": recipe.instructions,
+        "user_id": recipe.user_id,
+        "owner_username": recipe.user.username if recipe.user is not None else None,
+        "is_public": bool(recipe.is_public)
+    }
+    for recipe in recipes
+])
 
 @recipes_bp.get("/recipes/<int:recipe_id>")
 def get_recipe(recipe_id):
-      recipe = get_recipe_by_id_orm(recipe_id)
+    recipe = get_recipe_by_id_orm(recipe_id)
 
-      if recipe is None:
-          return jsonify({"error": "recipe not found"}), 404
-      
-      else: 
-          return jsonify({
-              "id": recipe.id,
-            "title": recipe.title,
-            "ingredients": recipe.ingredients,
-            "instructions": recipe.instructions,
-            "user_id": recipe.user_id,
-            "is_public": bool(recipe.is_public)
-              
-          })
+    if recipe is None:
+        return jsonify({"error": "recipe not found"}), 404
+    
+    return jsonify({
+        "id": recipe.id,
+        "title": recipe.title,
+        "ingredients": recipe.ingredients,
+        "instructions": recipe.instructions,
+        "user_id": recipe.user_id,
+        "owner_username": recipe.user.username if recipe.user is not None else None,
+        "is_public": bool(recipe.is_public)
+    }), 200
+       
+
+
       
 
 
@@ -70,25 +75,25 @@ def create_recipe():
 
     db.session.add(recipe)
     db.session.commit()
-
+    cache.clear()
+    
     return jsonify({
-        "id": recipe.id,
-        "title": recipe.title,
-        "ingredients": recipe.ingredients,
-        "instructions": recipe.instructions,
-        "user_id": recipe.user_id,
-        "is_public": bool(recipe.is_public)
-    }), 201
+    "id": recipe.id,
+    "title": recipe.title,
+    "ingredients": recipe.ingredients,
+    "instructions": recipe.instructions,
+    "user_id": recipe.user_id,
+    "is_public": bool(recipe.is_public)
+}), 201
 
 
       
 
+
 @recipes_bp.patch("/recipes/<int:recipe_id>")
 @token_required
 def update_recipe(recipe_id):
-
-    # Get current user info from the decorator (stored on g)
-    print("DEBUG: inside update_recipe", recipe_id)
+    # Get current user info from the decorator
     current_user_id = g.current_user["user_id"]
     current_role = g.current_user["role"]
 
@@ -104,9 +109,10 @@ def update_recipe(recipe_id):
 
     # Ownership OR admin check
     is_owner = (
-        row.user_id is not None
-        and row.user_id == current_user_id
+        row.user is not None
+        and row.user.id == current_user_id
     )
+
     is_admin = current_role == "admin"
 
     if not (is_owner or is_admin):
@@ -141,42 +147,53 @@ def update_recipe(recipe_id):
             {"error": "a recipe with that title already exists"}
         ), 409
 
+    # Clear cached responses after a successful update
+    cache.clear()
+
     return jsonify({
         "id": row.id,
         "title": row.title,
         "ingredients": row.ingredients,
         "instructions": row.instructions,
         "user_id": row.user_id,
+        "owner_username": row.user.username if row.user is not None else None,
         "is_public": bool(row.is_public)
     }), 200
+
+
+    
       
 @recipes_bp.delete("/recipes/<int:recipe_id>")
 @token_required
 def delete_recipe(recipe_id):
-
     current_user_id = g.current_user["user_id"]
     current_role = g.current_user["role"]
 
     row = Recipe.query.filter_by(id=recipe_id).one_or_none()
+
     if row is None:
         return jsonify({"error": "Recipe cannot be found"}), 404
-    
+
     is_owner = (
         row.user_id is not None
         and row.user_id == current_user_id
     )
+
     is_admin = current_role == "admin"
 
     if not (is_owner or is_admin):
         return jsonify(
             {"error": "you do not have permission to modify this recipe"}
         ), 403
-    
+
     db.session.delete(row)
     db.session.commit()
+
+    # Clear cached responses after a successful deletion
+    cache.clear()
+
     return jsonify({"status": "deleted"}), 200
-   
-    
+
 
 
 

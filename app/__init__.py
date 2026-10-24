@@ -20,7 +20,8 @@ from jwt import ExpiredSignatureError, InvalidTokenError
 
 from app.config import DevelopmentConfig, TestingConfig, ProductionConfig
 
-from app.extensions import db
+from app.extensions import db, migrate, cache, limiter
+
 
 
 def token_required(f):
@@ -81,8 +82,12 @@ def create_app(config_name="development"):
 
     print("DATABASE URI:", app.config["SQLALCHEMY_DATABASE_URI"])
 
-    db.init_app(app)
 
+    db.init_app(app)
+    migrate.init_app(app, db)
+    cache.init_app(app)
+    limiter.init_app(app)
+    
     return app
     
   

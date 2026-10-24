@@ -5,7 +5,7 @@ import jwt
 from jwt import ExpiredSignatureError, InvalidTokenError
 from app.services.auth_service import login_user
 from sqlalchemy.exc import IntegrityError
-from app.extensions import db
+from app.extensions import db, limiter
 from app.models import User
 
 auth_bp = Blueprint("auth", __name__, url_prefix="")
@@ -14,6 +14,7 @@ auth_bp = Blueprint("auth", __name__, url_prefix="")
 
 
 @auth_bp.post("/login")
+@limiter.limit("5 per minute")
 def login():
     data = request.get_json() or {}
 
@@ -27,13 +28,15 @@ def login():
 
     if user is None or not check_password_hash(user.password_hash, password):
         return jsonify({"error": "invalid credentials"}), 401
-
+    
     payload = {
-        "user_id": user.id,
-        "username": user.username,
-        "role": user.role,
-        "exp": datetime.utcnow() + timedelta(hours=2),
-    }
+    "user_id": user.id,
+    "username": user.username,
+    "role": "user",
+    "exp": datetime.utcnow() + timedelta(hours=2),
+}
+
+   
 
     # Get settings from config
     secret = current_app.config["JWT_SECRET"]
@@ -51,6 +54,7 @@ def login():
 
 
 @auth_bp.post("/register")
+@limiter.limit("5 per minute")
 def register():
     data = request.get_json() or {}
 

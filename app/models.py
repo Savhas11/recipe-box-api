@@ -28,6 +28,8 @@ class User(db.Model):
     username = db.Column(db.String, nullable=False, unique=True)
     email = db.Column(db.String, nullable=False, unique=True)
     password_hash = db.Column(db.String, nullable=False)
+    role = db.Column(db.String, nullable=False, default="user")
+    recipes = db.relationship("Recipe", back_populates="user")
 
 
 class Recipe(db.Model):
@@ -38,6 +40,7 @@ class Recipe(db.Model):
     ingredients = db.Column(db.String, nullable=False)
     instructions = db.Column(db.String, nullable=False, default="")
     is_public = db.Column(db.Integer, nullable=False, default=1)
-    user_id = db.Column(db.Integer)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    user = db.relationship("User", back_populates="recipes")
 
 

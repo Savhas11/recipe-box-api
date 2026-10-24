@@ -13,11 +13,17 @@ class Config:
 
 
 class DevelopmentConfig(Config):
-    pass
+    DATABASE = Config.BASE_DIR / "instance" / "lesson7.sqlite"
+    SQLALCHEMY_DATABASE_URI = f"sqlite:///{DATABASE}"
+    CACHE_TYPE = "SimpleCache"
+    CACHE_DEFAULT_TIMEOUT = 60  # seconds
 
 
 class TestingConfig(Config):
-    DATABASE = "instance/test_recipes.sqlite"
+    DATABASE = Config.BASE_DIR / "instance" / "test_recipes.sqlite"
+    SQLALCHEMY_DATABASE_URI = f"sqlite:///{DATABASE}"
+    CACHE_TYPE = "SimpleCache"
+    CACHE_DEFAULT_TIMEOUT = 60  # seconds
 
 
 
